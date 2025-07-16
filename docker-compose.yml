@@ -1,0 +1,20 @@
+name: raft
+
+services:
+  node:
+    scale: ${CLUSTER_SIZE:-3}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CLUSTER_SIZE=${CLUSTER_SIZE:-3}
+    ports:
+      - 8001-800${CLUSTER_SIZE:-3}:8080
+    volumes:
+      - ./app:/app
+    networks:
+      - raft-cluster
+
+networks:
+  raft-cluster:
+    name: raft-cluster
