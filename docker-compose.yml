@@ -8,13 +8,17 @@ services:
       dockerfile: Dockerfile
     environment:
       - CLUSTER_SIZE=${CLUSTER_SIZE:-3}
+      - HEARTBEAT_TIMEOUT=${HEARTBEAT_TIMEOUT:-0.4}
+      - ELECTION_TIMEOUT=${ELECTION_TIMEOUT:-2.0}
     ports:
       - 8001-800${CLUSTER_SIZE:-3}:8080
     volumes:
-      - ./app:/app
+      - ./server:/app
     networks:
       - raft-cluster
 
 networks:
   raft-cluster:
     name: raft-cluster
+  lost-cluster:
+    name: lost-cluster

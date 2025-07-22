@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 # Copy the source code into the container.
-COPY app/* .
+COPY server/* .
 
 # Run the application.
 CMD ["python", "server.py"]
