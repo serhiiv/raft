@@ -3,7 +3,7 @@ import pytest_asyncio
 from aiohttp import web
 from typing import Any, AsyncGenerator
 
-from server.raft_node import Node  # Update with the correct import path
+from server.raft_node import Node
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ async def node(node_id: str, nodes: list[str]) -> AsyncGenerator[Node, None]:
 @pytest_asyncio.fixture
 async def app() -> web.Application:
     node = Node("node-1", ["node-2", "node-3"])
-    return node.app  # Just return the app, aiohttp_client will handle binding
+    return node.app
 
 
 @pytest_asyncio.fixture
@@ -51,29 +51,15 @@ async def test_initial_state(node: Node) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_root(client: Any) -> None:
-    resp = await client.get("/")
+async def test_handle_command_not_leader(client: Any) -> None:
+    resp = await client.post("/", json={"command": "test"})
     assert resp.status == 200
     text = await resp.text()
-    assert "Role: FOLLOWER" in text
-    assert "Node: node-1" in text
-    assert "Term: 0" in text
-    assert "Log : []" in text
-    assert "Commit Length: 0" in text
-    assert "Sent Length: {}" in text
-    assert "Acked Length: {}" in text
-    assert "State Machine: _" in text
+    assert "ERROR: I am not a LEADER" in text
 
 
 # @pytest.mark.asyncio
-# async def test_handle_command_not_leader(client):
-#     resp = await client.post('/', json={"command": "test"})
-#     assert resp.status == 200
-#     text = await resp.text()
-#     assert "ERROR: I am not a LEADER" in text
-
-# @pytest.mark.asyncio
-# async def test_handle_request_vote(client):
+# async def test_handle_request_vote(client: Any) -> None:
 #     request_data = {
 #         "term": 1,
 #         "candidate_id": "node-2",
@@ -87,7 +73,7 @@ async def test_handle_root(client: Any) -> None:
 #     assert data["vote_granted"] == True
 
 # @pytest.mark.asyncio
-# async def test_handle_append_entries(client):
+# async def test_handle_append_entries(client: Any) -> None:
 #     request_data = {
 #         "term": 1,
 #         "leader_id": "node-2",
@@ -102,11 +88,6 @@ async def test_handle_root(client: Any) -> None:
 #     assert data["term"] == 1
 #     assert data["success"] == True
 
-# @pytest.mark.asyncio
-# async def test_election_timeout(node):
-#     # Wait for election timeout
-#     await asyncio.sleep(6)  # ELECTION_TIMEOUT + buffer
-#     assert node.current_role == "CANDIDATE"
 #     assert node.current_term == 1
 
 # @pytest.mark.asyncio
@@ -116,6 +97,21 @@ async def test_handle_root(client: Any) -> None:
 #     assert node.log == entries
 #     assert node.commit_length == 1
 #     assert node.state_machine == "test"
+
+
+@pytest.mark.asyncio
+async def test_commit_log_entries_0(node: Node) -> None:
+    # Setup
+    node.current_role = "LEADER"
+    node.current_term = 1
+    node.log = [(1, "test1")]
+    node.acked_length = {"node-1": 1, "node-2": 0, "node-3": 0}
+
+    # Test
+    node.commit_log_entries()
+    assert node.commit_length == 0
+    assert node.state_machine == "_"
+
 
 
 @pytest.mark.asyncio
@@ -144,3 +140,18 @@ async def test_commit_log_entries_2(node: Node) -> None:
     node.commit_log_entries()
     assert node.commit_length == 2
     assert node.state_machine == "_test1_test2_"
+
+
+@pytest.mark.asyncio
+async def test_handle_root(client: Any) -> None:
+    resp = await client.get("/")
+    assert resp.status == 200
+    text = await resp.text()
+    assert "Role: FOLLOWER" in text
+    assert "Node: node-1" in text
+    assert "Term: 0" in text
+    assert "Log : []" in text
+    assert "Commit Length: 0" in text
+    assert "Sent Length: {}" in text
+    assert "Acked Length: {}" in text
+    assert "State Machine: _" in text

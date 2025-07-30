@@ -49,42 +49,30 @@ logger = logging.getLogger(__name__)
 
 class Node:
     def __init__(self, node_id: str, nodes: List[str]):
-        ### Node state
+        # Node state
         self.node_id: str = node_id
         self.nodes: List[str] = nodes
         self.majority: int = (len(nodes) + 2) // 2
         self.current_role: str = "FOLLOWER"  # FOLLOWER, CANDIDATE, LEADER
         self.node_last_activity_time: float = time()
+        self.state_machine: str = "_"
+        self.command_lock = asyncio.Semaphore(1)  # Add semaphore for commands
 
-        ### Persistent current_role on all nodes: (Updated on stable storage before responding to RPCs)
-        # self.current_term - latest term node has seen (initialized to 0 on first boot, increases monotonically)
-        # self.voted_for - candidateId that received vote in current term (or null if none)
-        # self.log - log[] log entries; each entry contains command for state machine, and term when entry was received by leader (first index is 1)Each log entry: {"term": int, "index": int, "command": str}
+        # Persistent data on all nodes:
         self.current_term: int = 0
         self.voted_for: Optional[str] = None
         self.log: List[Tuple[int, str]] = []  # Each log entry: (term, command)
 
-        ### Volatile state on all nodes:
-        # # self.commit_index - index of highest log entry known to be committed (initialized to 0, increases monotonically)
-        # # self.last_applied - index of highest log entry applied to state machine (initialized to 0, increases monotonically)
-        # self.commit_index: int = 0
-        # self.last_applied: int = 0
-
-        # ### Volatile state on leaders: (Reinitialized after election)
-        # # self.next_index - for each node, index of the next log entry to send to that node (initialized to leader last log index + 1)
-        # # self.match_index - index of highest log entry known to be replicated on each node (initialized to 0, increases monotonically)
-        # self.next_index: dict[str, int] = {node: 0 for node in nodes}
-        # self.match_index: dict[str, int] = {node: 0 for node in nodes}
-
+        # Volatile state on all nodes:
         self.commit_length: int = 0
         self.current_leader: str = ""
         self.votes_received: Set[str] = set()
+
+        # Volatile state on leaders
         self.sent_length: Dict[str, int] = {}
         self.acked_length: Dict[str, int] = {}
 
-        self.state_machine: str = "_"
-
-        ### Web application setup
+        # Web application setup
         self.app = web.Application()
         self.app.add_routes(
             [
@@ -94,30 +82,29 @@ class Node:
                 web.post("/append_entries", self.handle_append_entries),
             ]
         )
-        self.command_lock = asyncio.Semaphore(1)  # Add semaphore for commands
 
     async def start(self):
         """Start the Raft node."""
         logger.warning(f"I start as {self.current_role} for term {self.current_term}")
         logger.warning(f"My neighbor nodes {self.nodes}")
-        asyncio.create_task(self.check_election_timer())
+        asyncio.create_task(self.election_timer())
         asyncio.create_task(self.generate_heartbeats())
         runner = web.AppRunner(self.app)
         await runner.setup()
         site = web.TCPSite(runner)
         await site.start()
 
-    async def check_election_timer(self):
+    async def election_timer(self):
         """Check election timeout and start election if needed."""
         while True:
             if self.current_role == "FOLLOWER":
                 if (time() - self.node_last_activity_time) > ELECTION_TIMEOUT:
                     self.current_role = "CANDIDATE"
                     logger.warning("I am CANDIDATE")
-                    await self.start_election()
+                    await self.election()
             await asyncio.sleep(HEARTBEAT_TIMEOUT)
 
-    async def start_election(self) -> None:
+    async def election(self) -> None:
         """Start an election and request votes from other nodes."""
         while True:
             if self.current_role == "CANDIDATE":
@@ -154,7 +141,8 @@ class Node:
                             for node in self.nodes:
                                 self.sent_length[node] = len(self.log)
                                 self.acked_length[node] = 0
-                                # ReplicateLog(nodeId, follower )
+                                # # ReplicateLog(nodeId, follower )
+                                # await self.replicate_log(node)
 
                             logger.warning(f"I am LEADER for term {self.current_term}")
                             return
@@ -398,7 +386,7 @@ class Node:
             self.commit_length = max(ready)
 
     async def handle_root(self, request: web.Request) -> web.Response:
-        # returns Raft-log and node status
+        # returns node status
         return web.Response(
             text=(
                 f"Role: {self.current_role}\n"
@@ -410,12 +398,5 @@ class Node:
                 f"Sent Length: {self.sent_length}\n"
                 f"Acked Length: {self.acked_length}\n"
                 f"State Machine: {self.state_machine}\n"
-                # f"Heartbeat Timeout: {HEARTBEAT_TIMEOUT}\n"
-                # f"Election Timeout: {ELECTION_TIMEOUT}\n"
-                # f"Current Leader: {self.current_leader}\n"
-                # f"Votes Received: {self.votes_received}\n"
-                # f"Voted For: {self.voted_for}\n"
-                # "-" * 20 + "\n"
-                # f"Node Last Activity Time: {self.node_last_activity_time}\n"
             )
         )
