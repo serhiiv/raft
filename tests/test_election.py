@@ -4,9 +4,18 @@ from unittest.mock import AsyncMock, patch
 from server.raft_node import Node, ResponseVote, RequestVote
 
 
-@pytest.mark.asyncio
-async def test_election_timer_becomes_candidate(monkeypatch: MonkeyPatch) -> None:
+@pytest.fixture
+def node():
+    # Create a Node with node_id 'n1' and two other nodes
     node = Node("node1", ["node2", "node3"])
+    node.node_last_activity_time = 0  # for determinism
+    return node
+
+
+@pytest.mark.asyncio
+async def test_election_timer_becomes_candidate(
+    monkeypatch: MonkeyPatch, node: Node
+) -> None:
     node.current_role = "FOLLOWER"
     node.node_last_activity_time = 0  # Simulate old activity time
 
@@ -27,8 +36,7 @@ async def test_election_timer_becomes_candidate(monkeypatch: MonkeyPatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_election_timer_no_election(monkeypatch: MonkeyPatch) -> None:
-    node = Node("node1", ["node2", "node3"])
+async def test_election_timer_no_election(monkeypatch: MonkeyPatch, node: Node) -> None:
     node.current_role = "FOLLOWER"
     node.node_last_activity_time = 100  # Simulate recent activity
 
@@ -49,8 +57,9 @@ async def test_election_timer_no_election(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_election_timer_not_follower(monkeypatch: MonkeyPatch) -> None:
-    node = Node("node1", ["node2", "node3"])
+async def test_election_timer_not_follower(
+    monkeypatch: MonkeyPatch, node: Node
+) -> None:
     node.current_role = "LEADER"  # Not a follower
     node.node_last_activity_time = 0  # Old activity time
 
@@ -71,9 +80,8 @@ async def test_election_timer_not_follower(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_election_becomes_leader(monkeypatch: MonkeyPatch) -> None:
+async def test_election_becomes_leader(monkeypatch: MonkeyPatch, node: Node) -> None:
     # Setup node with 2 followers (majority is 2)
-    node = Node("node1", ["node2", "node3"])
     node.current_role = "CANDIDATE"
     node.current_term = 1
     node.log = [(1, "msg1")]
@@ -103,9 +111,8 @@ async def test_election_becomes_leader(monkeypatch: MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_election_becomes_follower_on_higher_term(
-    monkeypatch: MonkeyPatch,
+    monkeypatch: MonkeyPatch, node: Node
 ) -> None:
-    node = Node("node1", ["node2"])
     node.current_role = "CANDIDATE"
     node.current_term = 1
 
@@ -129,8 +136,7 @@ async def test_election_becomes_follower_on_higher_term(
 
 
 @pytest.mark.asyncio
-async def test_election_no_quorum(monkeypatch: MonkeyPatch) -> None:
-    node = Node("node1", ["node2", "node3"])
+async def test_election_no_quorum(monkeypatch: MonkeyPatch, node: Node) -> None:
     node.current_role = "CANDIDATE"
     node.current_term = 1
 
@@ -138,13 +144,6 @@ async def test_election_no_quorum(monkeypatch: MonkeyPatch) -> None:
     async def mock_post_request_vote(
         node_id: str, request_data: RequestVote
     ) -> ResponseVote:
-        # if node_id == "node2":
-        #     return ResponseVote(
-        #         node_id=node_id,
-        #         term=request_data["term"],
-        #         vote_granted=True,
-        #     )
-        # else:
         return ResponseVote(
             node_id=node_id,
             term=request_data["term"],
@@ -171,8 +170,7 @@ async def test_election_no_quorum(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_request_vote_exception():
-    node = Node("node1", ["node2", "node3"])
+async def test_post_request_vote_exception(node: Node) -> None:
     node.current_term = 2
     request_data = RequestVote(
         term=2,

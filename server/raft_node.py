@@ -187,6 +187,7 @@ class Node:
         """Handle RequestVote RPC."""
         data: RequestVote = await request.json()
         self.node_last_activity_time = time()
+        vote_granted = False
 
         log_term = self.log[len(self.log) - 1][0] if self.log else 0
 
@@ -204,8 +205,6 @@ class Node:
             self.voted_for = data["candidate_id"]
             vote_granted = True
             logger.warning(f"I am FOLLOWER for term {self.current_term}")
-        else:
-            vote_granted = False
 
         return web.json_response(
             ResponseVote(
@@ -322,14 +321,14 @@ class Node:
 
     async def replicate_log(self, follower_id: str) -> bool:
         """Replicate log entries to a follower node."""
-        log_length = self.sent_length[follower_id]
+        sent_length = self.sent_length[follower_id]
         request_data = RequestAppend(
             leader_id=self.node_id,
             term=self.current_term,
-            log_length=log_length,
-            log_term=self.log[log_length - 1][0] if log_length > 0 else 0,
+            log_length=sent_length,
+            log_term=self.log[sent_length - 1][0] if sent_length > 0 else 0,
             leader_commit=self.commit_length,
-            entries=self.log[log_length:],
+            entries=self.log[sent_length:],
         )
         # (LogRequest, leaderId, currentTerm, i, prevLogTerm, commitLength, entries)
         # (LogRequest, leaderId, term, logLength, logTerm, leaderCommit, entries)
@@ -356,7 +355,21 @@ class Node:
                             # Update sent and acked lengths
                             self.sent_length[follower_id] = data["ack"]
                             self.acked_length[follower_id] = data["ack"]
-                            self.commit_log_entries()
+
+                            ready = {
+                                r
+                                for r in range(1, len(self.log) + 1)
+                                if self.acks(r) >= self.majority
+                            }
+                            if (
+                                ready
+                                and max(ready) > self.commit_length
+                                and self.log[max(ready) - 1][0] == self.current_term
+                            ):
+                                for i in range(self.commit_length, max(ready)):
+                                    self.state_machine += self.log[i][1] + "_"
+                                self.commit_length = max(ready)
+
                         elif self.sent_length[follower_id] > 0:
                             # Decrease sent length and retry replication
                             self.sent_length[follower_id] -= 1
@@ -371,32 +384,35 @@ class Node:
             return False
         return True
 
-    def commit_log_entries(self):
-        def acks(length: int) -> int:
-            return len({k for k, v in self.acked_length.items() if v >= length})
+    def acks(self, length: int) -> int:
+        return len({k for k, v in self.acked_length.items() if v >= length})
 
-        ready = {r for r in range(1, len(self.log) + 1) if acks(r) >= self.majority}
-        if (
-            ready
-            and max(ready) > self.commit_length
-            and self.log[max(ready) - 1][0] == self.current_term
-        ):
-            for i in range(self.commit_length, max(ready)):
-                self.state_machine += self.log[i][1] + "_"
-            self.commit_length = max(ready)
+    # def commit_log_entries(self):
+    #     # def acks(length: int) -> int:
+    #     #     return len({k for k, v in self.acked_length.items() if v >= length})
+
+    #     ready = {r for r in range(1, len(self.log) + 1) if self.acks(r) >= self.majority}
+    #     if (
+    #         ready
+    #         and max(ready) > self.commit_length
+    #         and self.log[max(ready) - 1][0] == self.current_term
+    #     ):
+    #         for i in range(self.commit_length, max(ready)):
+    #             self.state_machine += self.log[i][1] + "_"
+    #         self.commit_length = max(ready)
 
     async def handle_root(self, request: web.Request) -> web.Response:
         # returns node status
         return web.Response(
             text=(
-                f"Role: {self.current_role}\n"
-                f"Node: {self.node_id}\n"
-                f"Term: {self.current_term}\n"
-                f"Log : {self.log}\n"
-                "-\n"
-                f"Commit Length: {self.commit_length}\n"
-                f"Sent Length: {self.sent_length}\n"
-                f"Acked Length: {self.acked_length}\n"
-                f"State Machine: {self.state_machine}\n"
+                f"Node  : {self.node_id}\n"
+                f"Role  : {self.current_role}\n"
+                f"Term  : {self.current_term}\n"
+                f"Log   : {self.log}\n"
+                # "-\n"
+                f"Sent Length   : {self.sent_length}\n"
+                f"Acked Length  : {self.acked_length}\n"
+                f"Commit Length : {self.commit_length}\n"
+                f"State Machine : {self.state_machine}\n"
             )
         )
