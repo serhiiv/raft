@@ -20,5 +20,3 @@ services:
 networks:
   raft-cluster:
     name: raft-cluster
-  lost-cluster:
-    name: lost-cluster

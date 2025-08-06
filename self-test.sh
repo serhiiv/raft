@@ -5,7 +5,7 @@ export CLUSTER_SIZE=3
 export HEARTBEAT_TIMEOUT=1.0
 export ELECTION_TIMEOUT=2.0
 
-election_waiting=10
+election_waiting=$(echo "$ELECTION_TIMEOUT * 6" | bc)
 log_time=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
 
 
@@ -20,12 +20,12 @@ echo
 docker compose up --scale node=2 -d
 echo
 docker ps
+
 echo
 echo "== WAIT for the LEADER election..."
-
 sleep $election_waiting
 
-first_leader_name="raft-$(docker compose logs | grep 'LEADER' | tail -n1 | cut -d ' ' -f1)"
+first_leader_name="raft-$(docker compose logs --since $log_time | grep 'LEADER' | tail -n1 | cut -d ' ' -f1)"
 first_leader_port=$(docker ps | grep "$first_leader_name" | grep -oP '0\.0\.0\.0:\K[0-9]+')
 
 source ./view-logs.sh "$log_time"
@@ -52,6 +52,7 @@ echo
 echo "== SEND message 'msg2' to the leader"
 curl -s --json '{"command": "msg2"}' --request POST http://127.0.0.1:$first_leader_port
 echo
+sleep 2
 
 source ./view-logs.sh "$log_time"
 log_time=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
@@ -89,15 +90,16 @@ echo
 echo
 echo "network disconnect raft-cluster $first_leader_name"
 docker network disconnect raft-cluster $first_leader_name
+echo "docker network create lost-cluster"
+docker network create lost-cluster 
 echo "network connect lost-cluster $first_leader_name"
 docker network connect lost-cluster $first_leader_name
 
 echo
 echo "== WAIT for the LEADER election..."
-
 sleep $election_waiting
 
-second_leader_name="raft-$(docker compose logs | grep 'LEADER' | tail -n1 | cut -d ' ' -f1)"
+second_leader_name="raft-$(docker compose logs --since $log_time | grep 'LEADER' | tail -n1 | cut -d ' ' -f1)"
 second_leader_port=$(docker ps | grep "$second_leader_name" | grep -oP '0\.0\.0\.0:\K[0-9]+')
 
 source ./view-logs.sh "$log_time"
@@ -124,6 +126,7 @@ echo
 echo "== SEND message 'msg4' to the leader"
 curl -s --json '{"command": "msg4"}' --request POST http://127.0.0.1:$second_leader_port
 echo
+sleep 2
 
 source ./view-logs.sh "$log_time"
 log_time=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
@@ -142,6 +145,7 @@ echo
 echo "== SEND message 'msg5' to the leader"
 curl -s --json '{"command": "msg5"}' --request POST http://127.0.0.1:$first_leader_port
 echo
+sleep 2
 
 source ./view-logs.sh "$log_time"
 log_time=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
@@ -161,9 +165,10 @@ echo "network disconnect lost-cluster $first_leader_name"
 docker network disconnect lost-cluster $first_leader_name
 echo "network connect raft-cluster $first_leader_name"
 docker network connect raft-cluster $first_leader_name
+
+
 echo
 echo "== WAIT for the LEADER election..."
-
 sleep $election_waiting
 
 source ./view-logs.sh "$log_time"
@@ -180,4 +185,5 @@ read -p "press any key to continue..." -n1 -s
 echo
 
 echo
+docker network rm lost-cluster
 docker compose down

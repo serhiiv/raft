@@ -1,42 +1,17 @@
+# from urllib import request
 import pytest
-import pytest_asyncio
-from aiohttp import web
-from typing import Any, AsyncGenerator
-
+import asyncio
+from pytest import MonkeyPatch
+from unittest.mock import AsyncMock, MagicMock, patch
+from typing import List, Any, Coroutine
 from server.raft_node import Node
 
 
-@pytest.fixture
-def node_id() -> str:
-    return "node-1"
-
-
-@pytest.fixture
-def nodes() -> list[str]:
-    return ["node-2", "node-3"]
-
-
-@pytest_asyncio.fixture
-async def node(node_id: str, nodes: list[str]) -> AsyncGenerator[Node, None]:
-    node = Node(node_id, nodes)
-    yield node
-
-
-@pytest_asyncio.fixture
-async def app() -> web.Application:
-    node = Node("node-1", ["node-2", "node-3"])
-    return node.app
-
-
-@pytest_asyncio.fixture
-async def client(aiohttp_client: Any, app: web.Application) -> Any:
-    return await aiohttp_client(app)
-
-
 @pytest.mark.asyncio
-async def test_initial_state(node: Node) -> None:
-    assert node.node_id == "node-1"
-    assert node.nodes == ["node-2", "node-3"]
+async def test_initial_state() -> None:
+    node = Node("node1", ["node2", "node3"])
+    assert node.node_id == "node1"
+    assert node.nodes == ["node2", "node3"]
     assert node.majority == 2
     assert node.current_role == "FOLLOWER"
     assert node.node_last_activity_time is not None
@@ -51,12 +26,57 @@ async def test_initial_state(node: Node) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_root(client: Any) -> None:
-    resp = await client.get("/")
+async def test_start_creates_specific_tasks(monkeypatch: MonkeyPatch) -> None:
+    node = Node("node1", ["node2", "node3"])
+
+    # Replace the methods with mocks before calling start()
+    node.election_timer = AsyncMock()
+    node.generate_heartbeats = AsyncMock()
+
+    # Mock create_task to track created tasks
+    created_tasks: List[Any] = []
+
+    def track_create_task(coro: Coroutine[Any, Any, Any]) -> Any:
+        # Get the coroutine name for tracking
+        if hasattr(coro, "__name__"):
+            created_tasks.append(coro.__name__)
+
+        # Properly close the coroutine to prevent warnings
+        if hasattr(coro, "close"):
+            coro.close()
+
+    monkeypatch.setattr(asyncio, "create_task", track_create_task)
+
+    # Mock server setup
+    with (
+        patch("server.raft_node.web.AppRunner") as mock_runner,
+        patch("server.raft_node.web.TCPSite") as mock_site,
+    ):
+        mock_runner.return_value.setup = AsyncMock()
+        mock_site.return_value.start = AsyncMock()
+
+        await node.start()
+
+        # Verify tasks were created
+        assert len(created_tasks) >= 2  # Adjust based on expected number of tasks
+        # Verify server setup
+        mock_runner.return_value.setup.assert_called_once()
+        mock_site.return_value.start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_root() -> None:
+    node = Node("node1", ["node2", "node3"])
+
+    request = MagicMock()
+    resp = await node.handle_root(request)
+    text = resp.text
+
     assert resp.status == 200
-    text = await resp.text()
+    assert text is not None, "Response text should not be None"
+
     assert "Role  : FOLLOWER" in text
-    assert "Node  : node-1" in text
+    assert "Node  : node1" in text
     assert "Term  : 0" in text
     assert "Log   : []" in text
     assert "Commit Length : 0" in text

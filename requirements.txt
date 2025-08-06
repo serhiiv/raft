@@ -3,3 +3,4 @@ pytest
 pytest-asyncio 
 pytest-aiohttp
 aioresponses
+pytest-aioresponses

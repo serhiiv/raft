@@ -141,8 +141,11 @@ class Node:
                             for node in self.nodes:
                                 self.sent_length[node] = len(self.log)
                                 self.acked_length[node] = 0
-                                # # ReplicateLog(nodeId, follower )
-                                # await self.replicate_log(node)
+
+                            for resp in asyncio.as_completed(
+                                [self.replicate_log(node) for node in self.nodes]
+                            ):
+                                await resp
 
                             logger.warning(f"I am LEADER for term {self.current_term}")
                             return
@@ -330,13 +333,9 @@ class Node:
             leader_commit=self.commit_length,
             entries=self.log[sent_length:],
         )
-        # (LogRequest, leaderId, currentTerm, i, prevLogTerm, commitLength, entries)
-        # (LogRequest, leaderId, term, logLength, logTerm, leaderCommit, entries)
+
         url = f"http://{follower_id}:8080/append_entries"
         try:
-            # logging.warning(
-            #     f"POST Replicate log to '{follower_id}' with {request_data}"
-            # )
             async with ClientSession() as session:
                 async with session.post(
                     url, json=request_data, timeout=ClientTimeout(HEARTBEAT_TIMEOUT)
@@ -386,20 +385,6 @@ class Node:
 
     def acks(self, length: int) -> int:
         return len({k for k, v in self.acked_length.items() if v >= length})
-
-    # def commit_log_entries(self):
-    #     # def acks(length: int) -> int:
-    #     #     return len({k for k, v in self.acked_length.items() if v >= length})
-
-    #     ready = {r for r in range(1, len(self.log) + 1) if self.acks(r) >= self.majority}
-    #     if (
-    #         ready
-    #         and max(ready) > self.commit_length
-    #         and self.log[max(ready) - 1][0] == self.current_term
-    #     ):
-    #         for i in range(self.commit_length, max(ready)):
-    #             self.state_machine += self.log[i][1] + "_"
-    #         self.commit_length = max(ready)
 
     async def handle_root(self, request: web.Request) -> web.Response:
         # returns node status

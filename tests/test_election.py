@@ -1,5 +1,6 @@
 import pytest
 from pytest import MonkeyPatch
+from aioresponses import aioresponses
 from unittest.mock import AsyncMock, patch
 from server.raft_node import Node, ResponseVote, RequestVote
 
@@ -170,20 +171,48 @@ async def test_election_no_quorum(monkeypatch: MonkeyPatch, node: Node) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_request_vote_exception(node: Node) -> None:
-    node.current_term = 2
+async def test_post_request_vote_success():
+    node = Node("node1", ["node2", "node3"])
     request_data = RequestVote(
-        term=2,
+        term=1,
         candidate_id="node1",
         last_log_index=0,
         last_log_term=0,
     )
+    response = ResponseVote(
+        node_id="node2",
+        term=1,
+        vote_granted=True,
+    )
 
-    # Patch ClientSession to raise an exception
-    with patch("server.raft_node.ClientSession") as mock_session:
-        mock_session.return_value.__aenter__.side_effect = Exception("Network error")
+    with aioresponses() as mock:
+        # Mock the HTTP request
+        mock.post("http://node2:8080/request_vote", payload=response)  # type: ignore
 
-        resp = await node.post_request_vote("node2", request_data)
-        assert resp["node_id"] == ""
-        assert resp["term"] == node.current_term
-        assert resp["vote_granted"] is False
+        result = await node.post_request_vote("node2", request_data)
+        assert result == response
+
+
+@pytest.mark.asyncio
+async def test_post_request_vote_exception():
+    node = Node("node1", ["node2", "node3"])
+    node.current_term = 5
+    request_data = RequestVote(
+        term=node.current_term,
+        candidate_id="node1",
+        last_log_index=0,
+        last_log_term=0,
+    )
+    response = ResponseVote(
+        node_id="",
+        term=5,
+        vote_granted=False,
+    )
+
+    with aioresponses() as mock:
+        mock.post(  # type: ignore
+            "http://node2:8080/request_vote", exception=Exception("network error")
+        )
+        result = await node.post_request_vote("node2", request_data)
+
+        assert result == response
